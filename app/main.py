@@ -13,7 +13,7 @@ def handle_client(client_socket):
     # Close the client connection
     client_socket.close()
 
-def start_server(host='localhost', port=4221):
+def main(host='localhost', port=4221):
     """Start the HTTP server and listen for incoming connections."""
     # Create a socket
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
