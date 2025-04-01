@@ -1,81 +1,61 @@
 import socket  # noqa: F401
-from threading import Thread
-
-
-def reply(req, code, body="", headers={}):
-    b_reply = b""
-    match code:
-        case 200:
-            b_reply += b"HTTP/1.1 200 OK\r\n"
-        case 404:
-            b_reply += b"HTTP/1.1 404 Not Found\r\n"
-        case 500:
-            b_reply += b"HTTP/1.1 500 No\r\n"
-    if not "Content-Type" in headers:
-        headers["Content-Type"] = "text/plain"
-    if body != "":
-        headers["Content-Length"] = str(len(body))
-    for key, val in headers.items():
-        b_reply += bytes(key, "utf-8") + b": " + bytes(val, "utf-8") + b"\r\n"
-    b_reply += b"\r\n" + bytes(body, "utf-8")
-    return b_reply
-
-def handle_request(conn, req):
-    if req["path"] == "/":
-        return reply(req, 200)
-    if req["path"].startswith("/echo/"):
-        return reply(req, 200, req["path"][6:])
-    if req["path"] == "/user-agent":
-        ua = req["headers"]["User-Agent"]
-        return reply(req, 200, ua)
-    return reply(req, 404)
-
-def parse_request(bytes):
-    output = {"method": "", "path": "", "headers": {}, "body": ""}
-    lines = bytes.decode("utf-8").split("\r\n")
-    if len(lines) < 3:
-        return None
-    reqLine = lines[0].split(" ")
-    if (not reqLine[0]) or reqLine[0] not in ["GET", "POST", "PUT", "HEAD"]:
-        return None
-    if (not reqLine[1]) or reqLine[1][0] != "/":
-        return None
-    output["method"] = reqLine[0]
-    output["path"] = reqLine[1]
-    # Ignore HTTP version
-    lines = lines[1:]
-    c = 0
-    for l in lines:
-        if l == "":
-            break
-        headLine = l.split(":")
-        output["headers"][headLine[0]] = headLine[1].lstrip()
-        c += 1
-    output["body"] = lines[c + 1]
-    return output
-
-def handle_client(conn):
-    byte = []
-    try:
-        while (byte := conn.recv(1024)) != b"":
-            parsed_req = parse_request(byte)
-            if parsed_req == None:
-                conn.send(str.encode("HTTP/1.1 500 No\r\n\r\n"))
-                return conn.close()
-            # Recv & parsed request
-            conn.send(handle_request(conn, parsed_req))
-            return conn.close()
-    except Exception as e:
-        print("handle_client err", e)
-        
+import threading
+# Parse the request data to extract method, path, and version from the request
+def parse_request(request_data):
+    decoded_data = request_data.decode()
+    lines = decoded_data.split("\r\n")
+    # Get values from start line
+    method, path, version = lines[0].split(" ")
+    host = ""
+    user_agent = ""
+    # Iterate over the headers
+    for line in lines[1:]:
+        if line.startswith("Host: "):
+            host = line[len("Host: ") :]
+        elif line.startswith("User-Agent: "):
+            user_agent = line[len("User-Agent: ") :]
+    print(method, path, version, host, user_agent)
+    return method, path, version, host, user_agent
+# Return the HTTP response for a given path
+def get_response(method, path, version, host, user_agent):
+    if path == "/":
+        return "HTTP/1.1 200 OK\r\n\r\n"
+    if "echo" in path:
+        string = path.strip("/echo/")
+        return f"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {len(string)}\r\n\r\n{string}"
+    if "user-agent" in path:
+        return f"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: {len(user_agent)}\r\n\r\n{user_agent}"
+    return "HTTP/1.1 404 Not Found\r\n\r\n"
+def handle_request(client_socket):
+    # Read data from client
+    data = client_socket.recv(1024)
+    # Parse the requestk
+    method, path, version, host, user_agent = parse_request(data)
+    # Get and send response based on path
+    response = get_response(method, path, version, host, user_agent)
+    client_socket.send(response.encode())
 def main():
-    server_socket = socket.create_server(("localhost", 4221), reuse_port=True)
-    threads = []
-    while 1:
-        conn, addr = server_socket.accept()  # wait for client
-        t = Thread(target=handle_client, args=[conn])
-        threads.append(t)
-        t.run()
+    # Create TCP/IP Socket
+    port = 4221
+    server_socket = socket.create_server(("localhost", port), reuse_port=True)
+    print(f"Server is running on port {port}...")
+    try:
+        while True:
+            # Wait for a connection
+            print("Waiting for a connection...")
+            client_socket, addr = server_socket.accept()
+            threading.Thread(target=handle_request, args=(client_socket, addr)).start()
+            print(f"Connection from {addr} has been established")
+            # Handle request from client
+            handle_request(client_socket)
+            # Close the connection to client
+            client_socket.close()
+    except KeyboardInterrupt:
+        print("\nServer is shutting down...")
+    finally:
+        # Clean up server socket
+        server_socket.close()
+        print("Server has been shut down.")
 
 if __name__ == "__main__":
     main()
